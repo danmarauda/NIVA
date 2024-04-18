@@ -11,12 +11,12 @@ import type {
   DefaultModel,
   DefaultModelResponse,
   Model,
+  ModelTypeEnum,
 } from './declarations'
 import {
   ConfigurateMethodEnum,
-  ModelTypeEnum,
+  ModelStatusEnum,
 } from './declarations'
-import { languageMaps } from './utils'
 import I18n from '@/context/i18n'
 import {
   fetchDefaultModal,
@@ -59,8 +59,7 @@ export const useSystemDefaultModelAndModelList: UseDefaultModelAndModelList = (
 
 export const useLanguage = () => {
   const { locale } = useContext(I18n)
-
-  return languageMaps[locale]
+  return locale.replace('-', '_')
 }
 
 export const useProviderCrenditialsFormSchemasValue = (
@@ -101,16 +100,8 @@ export const useProviderCrenditialsFormSchemasValue = (
   return value
 }
 
-export type ModelTypeIndex = 1 | 2 | 3 | 4
-export const MODEL_TYPE_MAPS = {
-  1: ModelTypeEnum.textGeneration,
-  2: ModelTypeEnum.textEmbedding,
-  3: ModelTypeEnum.rerank,
-  4: ModelTypeEnum.speech2text,
-}
-
-export const useModelList = (type: ModelTypeIndex) => {
-  const { data, mutate, isLoading } = useSWR(`/workspaces/current/models/model-types/${MODEL_TYPE_MAPS[type]}`, fetchModelList)
+export const useModelList = (type: ModelTypeEnum) => {
+  const { data, mutate, isLoading } = useSWR(`/workspaces/current/models/model-types/${type}`, fetchModelList)
 
   return {
     data: data?.data || [],
@@ -119,8 +110,8 @@ export const useModelList = (type: ModelTypeIndex) => {
   }
 }
 
-export const useDefaultModel = (type: ModelTypeIndex) => {
-  const { data, mutate, isLoading } = useSWR(`/workspaces/current/default-model?model_type=${MODEL_TYPE_MAPS[type]}`, fetchDefaultModal)
+export const useDefaultModel = (type: ModelTypeEnum) => {
+  const { data, mutate, isLoading } = useSWR(`/workspaces/current/default-model?model_type=${type}`, fetchDefaultModal)
 
   return {
     data: data?.data,
@@ -141,6 +132,7 @@ export const useCurrentProviderAndModel = (modelList: Model[], defaultModel?: De
 
 export const useTextGenerationCurrentProviderAndModelAndModelList = (defaultModel?: DefaultModel) => {
   const { textGenerationModelList } = useProviderContext()
+  const activeTextGenerationModelList = textGenerationModelList.filter(model => model.status === ModelStatusEnum.active)
   const {
     currentProvider,
     currentModel,
@@ -150,24 +142,11 @@ export const useTextGenerationCurrentProviderAndModelAndModelList = (defaultMode
     currentProvider,
     currentModel,
     textGenerationModelList,
+    activeTextGenerationModelList,
   }
 }
 
-export const useAgentThoughtCurrentProviderAndModelAndModelList = (defaultModel?: DefaultModel) => {
-  const { agentThoughtModelList } = useProviderContext()
-  const {
-    currentProvider,
-    currentModel,
-  } = useCurrentProviderAndModel(agentThoughtModelList, defaultModel)
-
-  return {
-    currentProvider,
-    currentModel,
-    agentThoughtModelList,
-  }
-}
-
-export const useModelListAndDefaultModel = (type: ModelTypeIndex) => {
+export const useModelListAndDefaultModel = (type: ModelTypeEnum) => {
   const { data: modelList } = useModelList(type)
   const { data: defaultModel } = useDefaultModel(type)
 
@@ -177,7 +156,7 @@ export const useModelListAndDefaultModel = (type: ModelTypeIndex) => {
   }
 }
 
-export const useModelListAndDefaultModelAndCurrentProviderAndModel = (type: ModelTypeIndex) => {
+export const useModelListAndDefaultModelAndCurrentProviderAndModel = (type: ModelTypeEnum) => {
   const { modelList, defaultModel } = useModelListAndDefaultModel(type)
   const { currentProvider, currentModel } = useCurrentProviderAndModel(
     modelList,
@@ -195,9 +174,8 @@ export const useModelListAndDefaultModelAndCurrentProviderAndModel = (type: Mode
 export const useUpdateModelList = () => {
   const { mutate } = useSWRConfig()
 
-  const updateModelList = useCallback((type: ModelTypeIndex | ModelTypeEnum) => {
-    const modelType = typeof type === 'number' ? MODEL_TYPE_MAPS[type] : type
-    mutate(`/workspaces/current/models/model-types/${modelType}`)
+  const updateModelList = useCallback((type: ModelTypeEnum) => {
+    mutate(`/workspaces/current/models/model-types/${type}`)
   }, [mutate])
 
   return updateModelList
@@ -258,14 +236,12 @@ export const useModelProviders = () => {
   }
 }
 
-export const useUpdateModelProvidersAndModelList = () => {
+export const useUpdateModelProviders = () => {
   const { mutate } = useSWRConfig()
-  const updateModelList = useUpdateModelList()
 
-  const updateModelProvidersAndModelList = useCallback(() => {
+  const updateModelProviders = useCallback(() => {
     mutate('/workspaces/current/model-providers')
-    updateModelList(1)
-  }, [mutate, updateModelList])
+  }, [mutate])
 
-  return updateModelProvidersAndModelList
+  return updateModelProviders
 }

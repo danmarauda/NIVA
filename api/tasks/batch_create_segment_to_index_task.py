@@ -2,7 +2,7 @@ import datetime
 import logging
 import time
 import uuid
-from typing import List, cast
+from typing import cast
 
 import click
 from celery import shared_task
@@ -15,11 +15,11 @@ from core.model_runtime.model_providers.__base.text_embedding_model import TextE
 from extensions.ext_database import db
 from extensions.ext_redis import redis_client
 from libs import helper
-from models.dataset import DocumentSegment, Dataset, Document
+from models.dataset import Dataset, Document, DocumentSegment
 
 
 @shared_task(queue='dataset')
-def batch_create_segment_to_index_task(job_id: str, content: List, dataset_id: str, document_id: str,
+def batch_create_segment_to_index_task(job_id: str, content: list, dataset_id: str, document_id: str,
                                        tenant_id: str, user_id: str):
     """
     Async batch create segment to index
@@ -85,9 +85,9 @@ def batch_create_segment_to_index_task(job_id: str, content: List, dataset_id: s
                 word_count=len(content),
                 tokens=tokens,
                 created_by=user_id,
-                indexing_at=datetime.datetime.utcnow(),
+                indexing_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None),
                 status='completed',
-                completed_at=datetime.datetime.utcnow()
+                completed_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             )
             if dataset_document.doc_form == 'qa_model':
                 segment_document.answer = segment['answer']

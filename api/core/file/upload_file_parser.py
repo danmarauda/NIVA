@@ -10,7 +10,8 @@ from flask import current_app
 
 from extensions.ext_storage import storage
 
-SUPPORT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg']
+IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg']
+IMAGE_EXTENSIONS.extend([ext.upper() for ext in IMAGE_EXTENSIONS])
 
 
 class UploadFileParser:
@@ -19,11 +20,11 @@ class UploadFileParser:
         if not upload_file:
             return None
 
-        if upload_file.extension not in SUPPORT_EXTENSIONS:
+        if upload_file.extension not in IMAGE_EXTENSIONS:
             return None
 
         if current_app.config['MULTIMODAL_SEND_IMAGE_FORMAT'] == 'url' or force_url:
-            return cls.get_signed_temp_image_url(upload_file)
+            return cls.get_signed_temp_image_url(upload_file.id)
         else:
             # get image file base64
             try:
@@ -36,7 +37,7 @@ class UploadFileParser:
             return f'data:{upload_file.mime_type};base64,{encoded_string}'
 
     @classmethod
-    def get_signed_temp_image_url(cls, upload_file) -> str:
+    def get_signed_temp_image_url(cls, upload_file_id) -> str:
         """
         get signed url from upload file
 
@@ -44,11 +45,11 @@ class UploadFileParser:
         :return:
         """
         base_url = current_app.config.get('FILES_URL')
-        image_preview_url = f'{base_url}/files/{upload_file.id}/image-preview'
+        image_preview_url = f'{base_url}/files/{upload_file_id}/image-preview'
 
         timestamp = str(int(time.time()))
         nonce = os.urandom(16).hex()
-        data_to_sign = f"image-preview|{upload_file.id}|{timestamp}|{nonce}"
+        data_to_sign = f"image-preview|{upload_file_id}|{timestamp}|{nonce}"
         secret_key = current_app.config['SECRET_KEY'].encode()
         sign = hmac.new(secret_key, data_to_sign.encode(), hashlib.sha256).digest()
         encoded_sign = base64.urlsafe_b64encode(sign).decode()

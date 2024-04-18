@@ -1,5 +1,4 @@
 import type { FC } from 'react'
-import { useSWRConfig } from 'swr'
 import { useTranslation } from 'react-i18next'
 import type {
   ModelProvider,
@@ -8,12 +7,14 @@ import type {
 import { ConfigurateMethodEnum } from '../declarations'
 import {
   DEFAULT_BACKGROUND_COLOR,
+  MODEL_PROVIDER_QUOTA_GET_FREE,
   modelTypeFormat,
 } from '../utils'
 import {
   useAnthropicBuyQuota,
   useFreeQuota,
   useLanguage,
+  useUpdateModelProviders,
 } from '../hooks'
 import ModelBadge from '../model-badge'
 import ProviderIcon from '../provider-icon'
@@ -48,14 +49,14 @@ const ProviderCard: FC<ProviderCardProps> = ({
 }) => {
   const { t } = useTranslation()
   const language = useLanguage()
-  const { mutate } = useSWRConfig()
+  const updateModelProviders = useUpdateModelProviders()
   const handlePay = useAnthropicBuyQuota()
   const handleFreeQuotaSuccess = () => {
-    mutate('/workspaces/current/model-providers')
+    updateModelProviders()
   }
   const handleFreeQuota = useFreeQuota(handleFreeQuotaSuccess)
   const configurateMethods = provider.configurate_methods.filter(method => method !== ConfigurateMethodEnum.fetchFromRemote)
-  const canGetFreeQuota = ['mininmax', 'spark', 'zhipuai'].includes(provider.provider) && !IS_CE_EDITION
+  const canGetFreeQuota = MODEL_PROVIDER_QUOTA_GET_FREE.includes(provider.provider) && !IS_CE_EDITION && provider.system_configuration.enabled
 
   return (
     <div
@@ -68,7 +69,7 @@ const ProviderCard: FC<ProviderCardProps> = ({
         </div>
         {
           provider.description && (
-            <div className='mt-1 leading-4 text-xs text-black/[48]'>{provider.description[language]}</div>
+            <div className='mt-1 leading-4 text-xs text-black/[48]'>{provider.description[language] || provider.description.en_US}</div>
           )
         }
       </div>
@@ -115,11 +116,11 @@ const ProviderCard: FC<ProviderCardProps> = ({
                 return (
                   <Button
                     key={method}
-                    className='h-7 bg-white text-xs text-gray-700'
+                    className={'h-7 bg-white text-xs text-gray-700 shrink-0'}
                     onClick={() => onOpenModal(method)}
                   >
-                    <Settings01 className='mr-[5px] w-3.5 h-3.5' />
-                    {t('common.operation.setup')}
+                    <Settings01 className={`mr-[5px] w-3.5 h-3.5 ${s.icon}`} />
+                    <span className='text-xs inline-flex items-center justify-center overflow-ellipsis shrink-0'>{t('common.operation.setup')}</span>
                   </Button>
                 )
               }

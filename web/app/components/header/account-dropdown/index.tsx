@@ -16,7 +16,7 @@ import { useAppContext } from '@/context/app-context'
 import { ArrowUpRight, ChevronDown } from '@/app/components/base/icons/src/vender/line/arrows'
 import { LogOut01 } from '@/app/components/base/icons/src/vender/line/general'
 import { useModalContext } from '@/context/modal-context'
-
+import { LanguagesSupported } from '@/i18n/language'
 export type IAppSelecotr = {
   isMobile: boolean
 }
@@ -39,6 +39,10 @@ export default function AppSelector({ isMobile }: IAppSelecotr) {
       url: '/logout',
       params: {},
     })
+
+    if (localStorage?.getItem('console_token'))
+      localStorage.removeItem('console_token')
+
     router.push('/signin')
   }
 
@@ -61,7 +65,7 @@ export default function AppSelector({ isMobile }: IAppSelecotr) {
                   <Avatar name={userProfile.name} className='sm:mr-2 mr-0' size={32} />
                   {!isMobile && <>
                     {userProfile.name}
-                    <ChevronDown className="w-3 h-3 ml-1 text-gray-700"/>
+                    <ChevronDown className="w-3 h-3 ml-1 text-gray-700" />
                   </>}
                 </Menu.Button>
               </div>
@@ -103,8 +107,8 @@ export default function AppSelector({ isMobile }: IAppSelecotr) {
                     <Menu.Item>
                       <Link
                         className={classNames(itemClassName, 'group justify-between')}
-                        href='https://feedback.dify.ai/'
-                        target='_blank'>
+                        href='https://github.com/langgenius/dify/discussions/categories/feedbacks'
+                        target='_blank' rel='noopener noreferrer'>
                         <div>{t('common.userProfile.roadmapAndFeedback')}</div>
                         <ArrowUpRight className='hidden w-[14px] h-[14px] text-gray-500 group-hover:flex' />
                       </Link>
@@ -113,7 +117,7 @@ export default function AppSelector({ isMobile }: IAppSelecotr) {
                       <Link
                         className={classNames(itemClassName, 'group justify-between')}
                         href='https://discord.gg/5AEfbxcd9k'
-                        target='_blank'>
+                        target='_blank' rel='noopener noreferrer'>
                         <div>{t('common.userProfile.community')}</div>
                         <ArrowUpRight className='hidden w-[14px] h-[14px] text-gray-500 group-hover:flex' />
                       </Link>
@@ -122,9 +126,9 @@ export default function AppSelector({ isMobile }: IAppSelecotr) {
                       <Link
                         className={classNames(itemClassName, 'group justify-between')}
                         href={
-                          locale === 'en' ? 'https://docs.dify.ai/' : `https://docs.dify.ai/v/${locale.toLowerCase()}/`
+                          locale !== LanguagesSupported[1] ? 'https://docs.dify.ai/' : `https://docs.dify.ai/v/${locale.toLowerCase()}/`
                         }
-                        target='_blank'>
+                        target='_blank' rel='noopener noreferrer'>
                         <div>{t('common.userProfile.helpCenter')}</div>
                         <ArrowUpRight className='hidden w-[14px] h-[14px] text-gray-500 group-hover:flex' />
                       </Link>

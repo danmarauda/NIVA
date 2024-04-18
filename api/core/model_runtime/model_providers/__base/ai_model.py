@@ -1,19 +1,24 @@
 import decimal
-import json
-import logging
 import os
 from abc import ABC, abstractmethod
 from typing import Optional
 
 import yaml
-from pydantic import ValidationError
 
-from core.model_runtime.entities.defaults import PARAMETER_RULE_TEMPLATE
-from core.model_runtime.entities.model_entities import PriceInfo, AIModelEntity, PriceType, PriceConfig, \
-    DefaultParameterName, FetchFrom, ModelType
 from core.model_runtime.entities.common_entities import I18nObject
-from core.model_runtime.errors.invoke import InvokeError, InvokeAuthorizationError
+from core.model_runtime.entities.defaults import PARAMETER_RULE_TEMPLATE
+from core.model_runtime.entities.model_entities import (
+    AIModelEntity,
+    DefaultParameterName,
+    FetchFrom,
+    ModelType,
+    PriceConfig,
+    PriceInfo,
+    PriceType,
+)
+from core.model_runtime.errors.invoke import InvokeAuthorizationError, InvokeError
 from core.model_runtime.model_providers.__base.tokenizers.gpt2_tokenzier import GPT2Tokenizer
+from core.utils.position_helper import get_position_map, sort_by_position_map
 
 
 class AIModel(ABC):
@@ -55,14 +60,16 @@ class AIModel(ABC):
         :param error: model invoke error
         :return: unified error
         """
+        provider_name = self.__class__.__module__.split('.')[-3]
+
         for invoke_error, model_errors in self._invoke_error_mapping.items():
             if isinstance(error, tuple(model_errors)):
                 if invoke_error == InvokeAuthorizationError:
-                    return invoke_error(description="Incorrect model credentials provided, please check and try again. ")
+                    return invoke_error(description=f"[{provider_name}] Incorrect model credentials provided, please check and try again. ")
 
-                return invoke_error(description=f"{invoke_error.description}: {str(error)}")
+                return invoke_error(description=f"[{provider_name}] {invoke_error.description}, {str(error)}")
 
-        return InvokeError(description=f"Error: {str(error)}")
+        return InvokeError(description=f"[{provider_name}] Error: {str(error)}")
 
     def get_price(self, model: str, credentials: dict, price_type: PriceType, tokens: int) -> PriceInfo:
         """
@@ -142,20 +149,12 @@ class AIModel(ABC):
         ]
 
         # get _position.yaml file path
-        position_file_path = os.path.join(provider_model_type_path, '_position.yaml')
-
-        # read _position.yaml file
-        position_map = {}
-        if os.path.exists(position_file_path):
-            with open(position_file_path, 'r', encoding='utf-8') as f:
-                positions = yaml.safe_load(f)
-                # convert list to dict with key as model provider name, value as index
-                position_map = {position: index for index, position in enumerate(positions)}
+        position_map = get_position_map(provider_model_type_path)
 
         # traverse all model_schema_yaml_paths
         for model_schema_yaml_path in model_schema_yaml_paths:
             # read yaml data from yaml file
-            with open(model_schema_yaml_path, 'r', encoding='utf-8') as f:
+            with open(model_schema_yaml_path, encoding='utf-8') as f:
                 yaml_data = yaml.safe_load(f)
 
             new_parameter_rules = []
@@ -200,8 +199,7 @@ class AIModel(ABC):
             model_schemas.append(model_schema)
 
         # resort model schemas by position
-        if position_map:
-            model_schemas.sort(key=lambda x: position_map.get(x.model, 999))
+        model_schemas = sort_by_position_map(position_map, model_schemas, lambda x: x.model)
 
         # cache model schemas
         self.model_schemas = model_schemas
@@ -256,23 +254,23 @@ class AIModel(ABC):
                 try:
                     default_parameter_name = DefaultParameterName.value_of(parameter_rule.use_template)
                     default_parameter_rule = self._get_default_parameter_rule_variable_map(default_parameter_name)
-                    if not parameter_rule.max:
+                    if not parameter_rule.max and 'max' in default_parameter_rule:
                         parameter_rule.max = default_parameter_rule['max']
-                    if not parameter_rule.min:
+                    if not parameter_rule.min and 'min' in default_parameter_rule:
                         parameter_rule.min = default_parameter_rule['min']
-                    if not parameter_rule.precision:
+                    if not parameter_rule.default and 'default' in default_parameter_rule:
                         parameter_rule.default = default_parameter_rule['default']
-                    if not parameter_rule.precision:
+                    if not parameter_rule.precision and 'precision' in default_parameter_rule:
                         parameter_rule.precision = default_parameter_rule['precision']
-                    if not parameter_rule.required:
+                    if not parameter_rule.required and 'required' in default_parameter_rule:
                         parameter_rule.required = default_parameter_rule['required']
-                    if not parameter_rule.help:
+                    if not parameter_rule.help and 'help' in default_parameter_rule:
                         parameter_rule.help = I18nObject(
                             en_US=default_parameter_rule['help']['en_US'],
                         )
-                    if not parameter_rule.help.en_US:
+                    if not parameter_rule.help.en_US and ('help' in default_parameter_rule and 'en_US' in default_parameter_rule['help']):
                         parameter_rule.help.en_US = default_parameter_rule['help']['en_US']
-                    if not parameter_rule.help.zh_Hans:
+                    if not parameter_rule.help.zh_Hans and ('help' in default_parameter_rule and 'zh_Hans' in default_parameter_rule['help']):
                         parameter_rule.help.zh_Hans = default_parameter_rule['help'].get('zh_Hans', default_parameter_rule['help']['en_US'])
                 except ValueError:
                     pass

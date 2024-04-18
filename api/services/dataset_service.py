@@ -1,42 +1,50 @@
+import datetime
 import json
 import logging
-import datetime
-import time
 import random
+import time
 import uuid
-from typing import Optional, List, cast
+from typing import Optional, cast
 
 from flask import current_app
+from flask_login import current_user
 from sqlalchemy import func
 
-from core.index.index import IndexBuilder
 from core.errors.error import LLMBadRequestError, ProviderTokenNotInitError
 from core.model_manager import ModelManager
 from core.model_runtime.entities.model_entities import ModelType
 from core.model_runtime.model_providers.__base.text_embedding_model import TextEmbeddingModel
-from extensions.ext_redis import redis_client
-from flask_login import current_user
-
+from core.rag.datasource.keyword.keyword_factory import Keyword
+from core.rag.models.document import Document as RAGDocument
 from events.dataset_event import dataset_was_deleted
 from events.document_event import document_was_deleted
 from extensions.ext_database import db
+from extensions.ext_redis import redis_client
 from libs import helper
 from models.account import Account
-from models.dataset import Dataset, Document, DatasetQuery, DatasetProcessRule, AppDatasetJoin, DocumentSegment, \
-    DatasetCollectionBinding
+from models.dataset import (
+    AppDatasetJoin,
+    Dataset,
+    DatasetCollectionBinding,
+    DatasetProcessRule,
+    DatasetQuery,
+    Document,
+    DocumentSegment,
+)
 from models.model import UploadFile
 from models.source import DataSourceBinding
 from services.errors.account import NoPermissionError
 from services.errors.dataset import DatasetNameDuplicateError
 from services.errors.document import DocumentIndexingError
 from services.errors.file import FileNotExistsError
+from services.feature_service import FeatureModel, FeatureService
 from services.vector_service import VectorService
 from tasks.clean_notion_document_task import clean_notion_document_task
 from tasks.deal_dataset_vector_index_task import deal_dataset_vector_index_task
+from tasks.delete_segment_from_index_task import delete_segment_from_index_task
 from tasks.document_indexing_task import document_indexing_task
 from tasks.document_indexing_update_task import document_indexing_update_task
 from tasks.recover_document_indexing_task import recover_document_indexing_task
-from tasks.delete_segment_from_index_task import delete_segment_from_index_task
 
 
 class DatasetService:
@@ -133,8 +141,8 @@ class DatasetService:
                 )
             except LLMBadRequestError:
                 raise ValueError(
-                    f"No Embedding Model available. Please configure a valid provider "
-                    f"in the Settings -> Model Provider.")
+                    "No Embedding Model available. Please configure a valid provider "
+                    "in the Settings -> Model Provider.")
             except ProviderTokenNotInitError as ex:
                 raise ValueError(f"The dataset in unavailable, due to: "
                                  f"{ex.description}")
@@ -170,8 +178,8 @@ class DatasetService:
                     filtered_data['collection_binding_id'] = dataset_collection_binding.id
                 except LLMBadRequestError:
                     raise ValueError(
-                        f"No Embedding Model available. Please configure a valid provider "
-                        f"in the Settings -> Model Provider.")
+                        "No Embedding Model available. Please configure a valid provider "
+                        "in the Settings -> Model Provider.")
                 except ProviderTokenNotInitError as ex:
                     raise ValueError(ex.description)
 
@@ -243,7 +251,8 @@ class DocumentService:
             ],
             'segmentation': {
                 'delimiter': '\n',
-                'max_tokens': 500
+                'max_tokens': 500,
+                'chunk_overlap': 50
             }
         }
     }
@@ -359,7 +368,7 @@ class DocumentService:
         return document
 
     @staticmethod
-    def get_document_by_dataset_id(dataset_id: str) -> List[Document]:
+    def get_document_by_dataset_id(dataset_id: str) -> list[Document]:
         documents = db.session.query(Document).filter(
             Document.dataset_id == dataset_id,
             Document.enabled == True
@@ -368,7 +377,7 @@ class DocumentService:
         return documents
 
     @staticmethod
-    def get_batch_documents(dataset_id: str, batch: str) -> List[Document]:
+    def get_batch_documents(dataset_id: str, batch: str) -> list[Document]:
         documents = db.session.query(Document).filter(
             Document.batch == batch,
             Document.dataset_id == dataset_id,
@@ -394,7 +403,7 @@ class DocumentService:
     @staticmethod
     def delete_document(document):
         # trigger document_was_deleted signal
-        document_was_deleted.send(document.id, dataset_id=document.dataset_id)
+        document_was_deleted.send(document.id, dataset_id=document.dataset_id, doc_form=document.doc_form)
 
         db.session.delete(document)
         db.session.commit()
@@ -406,7 +415,7 @@ class DocumentService:
         # update document to be paused
         document.is_paused = True
         document.paused_by = current_user.id
-        document.paused_at = datetime.datetime.utcnow()
+        document.paused_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
         db.session.add(document)
         db.session.commit()
@@ -445,7 +454,9 @@ class DocumentService:
                                       created_from: str = 'web'):
 
         # check document limit
-        if current_app.config['EDITION'] == 'CLOUD':
+        features = FeatureService.get_features(current_user.current_tenant_id)
+
+        if features.billing.enabled:
             if 'original_document_id' not in document_data or not document_data['original_document_id']:
                 count = 0
                 if document_data["data_source"]["type"] == "upload_file":
@@ -455,6 +466,12 @@ class DocumentService:
                     notion_info_list = document_data["data_source"]['info_list']['notion_info_list']
                     for notion_info in notion_info_list:
                         count = count + len(notion_info['pages'])
+                batch_upload_limit = int(current_app.config['BATCH_UPLOAD_LIMIT'])
+                if count > batch_upload_limit:
+                    raise ValueError(f"You have reached the batch upload limit of {batch_upload_limit}.")
+
+                DocumentService.check_documents_upload_quota(count, features)
+
         # if dataset is empty, update dataset data_source_type
         if not dataset.data_source_type:
             dataset.data_source_type = document_data["data_source"]["type"]
@@ -606,6 +623,12 @@ class DocumentService:
         return documents, batch
 
     @staticmethod
+    def check_documents_upload_quota(count: int, features: FeatureModel):
+        can_upload_size = features.documents_upload_quota.limit - features.documents_upload_quota.size
+        if count > can_upload_size:
+            raise ValueError(f'You have reached the limit of your subscription. Only {can_upload_size} documents can be uploaded.')
+
+    @staticmethod
     def build_document(dataset: Dataset, process_rule_id: str, data_source_type: str, document_form: str,
                        document_language: str, data_source_info: dict, created_from: str, position: int,
                        account: Account,
@@ -716,7 +739,7 @@ class DocumentService:
         document.parsing_completed_at = None
         document.cleaning_completed_at = None
         document.splitting_completed_at = None
-        document.updated_at = datetime.datetime.utcnow()
+        document.updated_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
         document.created_from = created_from
         document.doc_form = document_data['doc_form']
         db.session.add(document)
@@ -734,14 +757,22 @@ class DocumentService:
 
     @staticmethod
     def save_document_without_dataset_id(tenant_id: str, document_data: dict, account: Account):
-        count = 0
-        if document_data["data_source"]["type"] == "upload_file":
-            upload_file_list = document_data["data_source"]["info_list"]['file_info_list']['file_ids']
-            count = len(upload_file_list)
-        elif document_data["data_source"]["type"] == "notion_import":
-            notion_info_list = document_data["data_source"]['info_list']['notion_info_list']
-            for notion_info in notion_info_list:
-                count = count + len(notion_info['pages'])
+        features = FeatureService.get_features(current_user.current_tenant_id)
+
+        if features.billing.enabled:
+            count = 0
+            if document_data["data_source"]["type"] == "upload_file":
+                upload_file_list = document_data["data_source"]["info_list"]['file_info_list']['file_ids']
+                count = len(upload_file_list)
+            elif document_data["data_source"]["type"] == "notion_import":
+                notion_info_list = document_data["data_source"]['info_list']['notion_info_list']
+                for notion_info in notion_info_list:
+                    count = count + len(notion_info['pages'])
+            batch_upload_limit = int(current_app.config['BATCH_UPLOAD_LIMIT'])
+            if count > batch_upload_limit:
+                raise ValueError(f"You have reached the batch upload limit of {batch_upload_limit}.")
+
+            DocumentService.check_documents_upload_quota(count, features)
 
         embedding_model = None
         dataset_collection_binding_id = None
@@ -1015,72 +1046,11 @@ class SegmentService:
                 credentials=embedding_model.credentials,
                 texts=[content]
             )
-        max_position = db.session.query(func.max(DocumentSegment.position)).filter(
-            DocumentSegment.document_id == document.id
-        ).scalar()
-        segment_document = DocumentSegment(
-            tenant_id=current_user.current_tenant_id,
-            dataset_id=document.dataset_id,
-            document_id=document.id,
-            index_node_id=doc_id,
-            index_node_hash=segment_hash,
-            position=max_position + 1 if max_position else 1,
-            content=content,
-            word_count=len(content),
-            tokens=tokens,
-            status='completed',
-            indexing_at=datetime.datetime.utcnow(),
-            completed_at=datetime.datetime.utcnow(),
-            created_by=current_user.id
-        )
-        if document.doc_form == 'qa_model':
-            segment_document.answer = args['answer']
-
-        db.session.add(segment_document)
-        db.session.commit()
-
-        # save vector index
-        try:
-            VectorService.create_segment_vector(args['keywords'], segment_document, dataset)
-        except Exception as e:
-            logging.exception("create segment index failed")
-            segment_document.enabled = False
-            segment_document.disabled_at = datetime.datetime.utcnow()
-            segment_document.status = 'error'
-            segment_document.error = str(e)
-            db.session.commit()
-        segment = db.session.query(DocumentSegment).filter(DocumentSegment.id == segment_document.id).first()
-        return segment
-
-    @classmethod
-    def multi_create_segment(cls, segments: list, document: Document, dataset: Dataset):
-        embedding_model = None
-        if dataset.indexing_technique == 'high_quality':
-            model_manager = ModelManager()
-            embedding_model = model_manager.get_model_instance(
-                tenant_id=current_user.current_tenant_id,
-                provider=dataset.embedding_model_provider,
-                model_type=ModelType.TEXT_EMBEDDING,
-                model=dataset.embedding_model
-            )
-        max_position = db.session.query(func.max(DocumentSegment.position)).filter(
-            DocumentSegment.document_id == document.id
-        ).scalar()
-        pre_segment_data_list = []
-        segment_data_list = []
-        for segment_item in segments:
-            content = segment_item['content']
-            doc_id = str(uuid.uuid4())
-            segment_hash = helper.generate_text_hash(content)
-            tokens = 0
-            if dataset.indexing_technique == 'high_quality' and embedding_model:
-                # calc embedding use tokens
-                model_type_instance = cast(TextEmbeddingModel, embedding_model.model_type_instance)
-                tokens = model_type_instance.get_num_tokens(
-                    model=embedding_model.model,
-                    credentials=embedding_model.credentials,
-                    texts=[content]
-                )
+        lock_name = 'add_segment_lock_document_id_{}'.format(document.id)
+        with redis_client.lock(lock_name, timeout=600):
+            max_position = db.session.query(func.max(DocumentSegment.position)).filter(
+                DocumentSegment.document_id == document.id
+            ).scalar()
             segment_document = DocumentSegment(
                 tenant_id=current_user.current_tenant_id,
                 dataset_id=document.dataset_id,
@@ -1092,32 +1062,96 @@ class SegmentService:
                 word_count=len(content),
                 tokens=tokens,
                 status='completed',
-                indexing_at=datetime.datetime.utcnow(),
-                completed_at=datetime.datetime.utcnow(),
+                indexing_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None),
+                completed_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None),
                 created_by=current_user.id
             )
             if document.doc_form == 'qa_model':
-                segment_document.answer = segment_item['answer']
-            db.session.add(segment_document)
-            segment_data_list.append(segment_document)
-            pre_segment_data = {
-                'segment': segment_document,
-                'keywords': segment_item['keywords']
-            }
-            pre_segment_data_list.append(pre_segment_data)
+                segment_document.answer = args['answer']
 
-        try:
+            db.session.add(segment_document)
+            db.session.commit()
+
             # save vector index
-            VectorService.multi_create_segment_vector(pre_segment_data_list, dataset)
-        except Exception as e:
-            logging.exception("create segment index failed")
-            for segment_document in segment_data_list:
+            try:
+                VectorService.create_segments_vector([args['keywords']], [segment_document], dataset)
+            except Exception as e:
+                logging.exception("create segment index failed")
                 segment_document.enabled = False
-                segment_document.disabled_at = datetime.datetime.utcnow()
+                segment_document.disabled_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
                 segment_document.status = 'error'
                 segment_document.error = str(e)
-        db.session.commit()
-        return segment_data_list
+                db.session.commit()
+            segment = db.session.query(DocumentSegment).filter(DocumentSegment.id == segment_document.id).first()
+            return segment
+
+    @classmethod
+    def multi_create_segment(cls, segments: list, document: Document, dataset: Dataset):
+        lock_name = 'multi_add_segment_lock_document_id_{}'.format(document.id)
+        with redis_client.lock(lock_name, timeout=600):
+            embedding_model = None
+            if dataset.indexing_technique == 'high_quality':
+                model_manager = ModelManager()
+                embedding_model = model_manager.get_model_instance(
+                    tenant_id=current_user.current_tenant_id,
+                    provider=dataset.embedding_model_provider,
+                    model_type=ModelType.TEXT_EMBEDDING,
+                    model=dataset.embedding_model
+                )
+            max_position = db.session.query(func.max(DocumentSegment.position)).filter(
+                DocumentSegment.document_id == document.id
+            ).scalar()
+            pre_segment_data_list = []
+            segment_data_list = []
+            keywords_list = []
+            for segment_item in segments:
+                content = segment_item['content']
+                doc_id = str(uuid.uuid4())
+                segment_hash = helper.generate_text_hash(content)
+                tokens = 0
+                if dataset.indexing_technique == 'high_quality' and embedding_model:
+                    # calc embedding use tokens
+                    model_type_instance = cast(TextEmbeddingModel, embedding_model.model_type_instance)
+                    tokens = model_type_instance.get_num_tokens(
+                        model=embedding_model.model,
+                        credentials=embedding_model.credentials,
+                        texts=[content]
+                    )
+                segment_document = DocumentSegment(
+                    tenant_id=current_user.current_tenant_id,
+                    dataset_id=document.dataset_id,
+                    document_id=document.id,
+                    index_node_id=doc_id,
+                    index_node_hash=segment_hash,
+                    position=max_position + 1 if max_position else 1,
+                    content=content,
+                    word_count=len(content),
+                    tokens=tokens,
+                    status='completed',
+                    indexing_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None),
+                    completed_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None),
+                    created_by=current_user.id
+                )
+                if document.doc_form == 'qa_model':
+                    segment_document.answer = segment_item['answer']
+                db.session.add(segment_document)
+                segment_data_list.append(segment_document)
+
+                pre_segment_data_list.append(segment_document)
+                keywords_list.append(segment_item['keywords'])
+
+            try:
+                # save vector index
+                VectorService.create_segments_vector(keywords_list, pre_segment_data_list, dataset)
+            except Exception as e:
+                logging.exception("create segment index failed")
+                for segment_document in segment_data_list:
+                    segment_document.enabled = False
+                    segment_document.disabled_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+                    segment_document.status = 'error'
+                    segment_document.error = str(e)
+            db.session.commit()
+            return segment_data_list
 
     @classmethod
     def update_segment(cls, args: dict, segment: DocumentSegment, document: Document, dataset: Dataset):
@@ -1132,17 +1166,24 @@ class SegmentService:
                     segment.answer = args['answer']
                 if 'keywords' in args and args['keywords']:
                     segment.keywords = args['keywords']
-                if'enabled' in args and args['enabled'] is not None:
+                if 'enabled' in args and args['enabled'] is not None:
                     segment.enabled = args['enabled']
                 db.session.add(segment)
                 db.session.commit()
                 # update segment index task
                 if args['keywords']:
-                    kw_index = IndexBuilder.get_index(dataset, 'economy')
-                    # delete from keyword index
-                    kw_index.delete_by_ids([segment.index_node_id])
-                    # save keyword index
-                    kw_index.update_segment_keywords_index(segment.index_node_id, segment.keywords)
+                    keyword = Keyword(dataset)
+                    keyword.delete_by_ids([segment.index_node_id])
+                    document = RAGDocument(
+                        page_content=segment.content,
+                        metadata={
+                            "doc_id": segment.index_node_id,
+                            "doc_hash": segment.index_node_hash,
+                            "document_id": segment.document_id,
+                            "dataset_id": segment.dataset_id,
+                        }
+                    )
+                    keyword.add_texts([document], keywords_list=[args['keywords']])
             else:
                 segment_hash = helper.generate_text_hash(content)
                 tokens = 0
@@ -1167,10 +1208,10 @@ class SegmentService:
                 segment.word_count = len(content)
                 segment.tokens = tokens
                 segment.status = 'completed'
-                segment.indexing_at = datetime.datetime.utcnow()
-                segment.completed_at = datetime.datetime.utcnow()
+                segment.indexing_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+                segment.completed_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
                 segment.updated_by = current_user.id
-                segment.updated_at = datetime.datetime.utcnow()
+                segment.updated_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
                 if document.doc_form == 'qa_model':
                     segment.answer = args['answer']
                 db.session.add(segment)
@@ -1180,7 +1221,7 @@ class SegmentService:
         except Exception as e:
             logging.exception("update segment index failed")
             segment.enabled = False
-            segment.disabled_at = datetime.datetime.utcnow()
+            segment.disabled_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             segment.status = 'error'
             segment.error = str(e)
             db.session.commit()
@@ -1218,7 +1259,7 @@ class DatasetCollectionBindingService:
             dataset_collection_binding = DatasetCollectionBinding(
                 provider_name=provider_name,
                 model_name=model_name,
-                collection_name="Vector_index_" + str(uuid.uuid4()).replace("-", "_") + '_Node',
+                collection_name=Dataset.gen_collection_name_by_id(str(uuid.uuid4())),
                 type=collection_type
             )
             db.session.add(dataset_collection_binding)

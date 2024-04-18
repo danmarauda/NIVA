@@ -1,16 +1,17 @@
-# -*- coding:utf-8 -*-
 from flask_login import current_user
-from flask_restful import fields, reqparse, marshal_with
+from flask_restful import marshal_with, reqparse
 from flask_restful.inputs import int_range
 from werkzeug.exceptions import NotFound
 
 from controllers.console import api
 from controllers.console.explore.error import NotChatAppError
 from controllers.console.explore.wraps import InstalledAppResource
+from core.app.entities.app_invoke_entities import InvokeFrom
 from fields.conversation_fields import conversation_infinite_scroll_pagination_fields, simple_conversation_fields
-from libs.helper import TimestampField, uuid_value
+from libs.helper import uuid_value
+from models.model import AppMode
 from services.conversation_service import ConversationService
-from services.errors.conversation import LastConversationNotExistsError, ConversationNotExistsError
+from services.errors.conversation import ConversationNotExistsError, LastConversationNotExistsError
 from services.web_conversation_service import WebConversationService
 
 
@@ -19,7 +20,8 @@ class ConversationListApi(InstalledAppResource):
     @marshal_with(conversation_infinite_scroll_pagination_fields)
     def get(self, installed_app):
         app_model = installed_app.app
-        if app_model.mode != 'chat':
+        app_mode = AppMode.value_of(app_model.mode)
+        if app_mode not in [AppMode.CHAT, AppMode.AGENT_CHAT, AppMode.ADVANCED_CHAT]:
             raise NotChatAppError()
 
         parser = reqparse.RequestParser()
@@ -38,8 +40,8 @@ class ConversationListApi(InstalledAppResource):
                 user=current_user,
                 last_id=args['last_id'],
                 limit=args['limit'],
+                invoke_from=InvokeFrom.EXPLORE,
                 pinned=pinned,
-                exclude_debug_conversation=True
             )
         except LastConversationNotExistsError:
             raise NotFound("Last Conversation Not Exists.")
@@ -48,7 +50,8 @@ class ConversationListApi(InstalledAppResource):
 class ConversationApi(InstalledAppResource):
     def delete(self, installed_app, c_id):
         app_model = installed_app.app
-        if app_model.mode != 'chat':
+        app_mode = AppMode.value_of(app_model.mode)
+        if app_mode not in [AppMode.CHAT, AppMode.AGENT_CHAT, AppMode.ADVANCED_CHAT]:
             raise NotChatAppError()
 
         conversation_id = str(c_id)
@@ -66,7 +69,8 @@ class ConversationRenameApi(InstalledAppResource):
     @marshal_with(simple_conversation_fields)
     def post(self, installed_app, c_id):
         app_model = installed_app.app
-        if app_model.mode != 'chat':
+        app_mode = AppMode.value_of(app_model.mode)
+        if app_mode not in [AppMode.CHAT, AppMode.AGENT_CHAT, AppMode.ADVANCED_CHAT]:
             raise NotChatAppError()
 
         conversation_id = str(c_id)
@@ -92,7 +96,8 @@ class ConversationPinApi(InstalledAppResource):
 
     def patch(self, installed_app, c_id):
         app_model = installed_app.app
-        if app_model.mode != 'chat':
+        app_mode = AppMode.value_of(app_model.mode)
+        if app_mode not in [AppMode.CHAT, AppMode.AGENT_CHAT, AppMode.ADVANCED_CHAT]:
             raise NotChatAppError()
 
         conversation_id = str(c_id)
@@ -108,7 +113,8 @@ class ConversationPinApi(InstalledAppResource):
 class ConversationUnPinApi(InstalledAppResource):
     def patch(self, installed_app, c_id):
         app_model = installed_app.app
-        if app_model.mode != 'chat':
+        app_mode = AppMode.value_of(app_model.mode)
+        if app_mode not in [AppMode.CHAT, AppMode.AGENT_CHAT, AppMode.ADVANCED_CHAT]:
             raise NotChatAppError()
 
         conversation_id = str(c_id)

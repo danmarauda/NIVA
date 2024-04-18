@@ -1,6 +1,5 @@
-import type { AppMode } from './app'
 import type { DataSourceNotionPage } from './common'
-import type { RetrievalConfig } from '@/types/app'
+import type { AppMode, RetrievalConfig } from '@/types/app'
 
 export enum DataSourceType {
   FILE = 'upload_file',
@@ -108,6 +107,7 @@ export type PreProcessingRule = {
 export type Segmentation = {
   separator: string
   max_tokens: number
+  chunk_overlap: number
 }
 
 export const DocumentIndexingStatusList = [

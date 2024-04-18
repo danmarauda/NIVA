@@ -132,6 +132,15 @@ const Welcome: FC<IWelcomeProps> = ({
                 onChange={(e) => { setInputs({ ...inputs, [item.key]: e.target.value }) }}
               />
             )}
+            {item.type === 'number' && (
+              <input
+                type='number'
+                placeholder={`${item.name}${!item.required ? `(${t('appDebug.variableTable.optional')})` : ''}`}
+                value={inputs?.[item.key] || ''}
+                onChange={(e) => { setInputs({ ...inputs, [item.key]: e.target.value }) }}
+                className={'w-full flex-grow py-2 pl-3 pr-3 box-border rounded-lg bg-gray-50'}
+              />
+            )}
           </div>
         ))}
       </div>
@@ -350,7 +359,7 @@ const Welcome: FC<IWelcomeProps> = ({
                 <a
                   className='text-gray-500'
                   href={siteInfo.privacy_policy}
-                  target='_blank'>{t('share.chat.privacyPolicyMiddle')}</a>
+                  target='_blank' rel='noopener noreferrer'>{t('share.chat.privacyPolicyMiddle')}</a>
                 {t('share.chat.privacyPolicyRight')}
               </div>
               : <div>

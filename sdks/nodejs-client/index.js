@@ -27,8 +27,8 @@ export const routes = {
     url: () => `/conversations`,
   },
   renameConversation: {
-    method: "PATCH",
-    url: (conversation_id) => `/conversations/${conversation_id}`,
+    method: "POST",
+    url: (conversation_id) => `/conversations/${conversation_id}/name`,
   },
   deleteConversation: {
     method: "DELETE",
@@ -37,7 +37,11 @@ export const routes = {
   fileUpload: {
     method: "POST",
     url: () => `/files/upload`,
-  }
+  },
+  runWorkflow: {
+    method: "POST",
+    url: () => `/workflows/run`,
+  },
 };
 
 export class DifyClient {
@@ -143,6 +147,21 @@ export class CompletionClient extends DifyClient {
       stream
     );
   }
+
+  runWorkflow(inputs, user, stream = false, files = null) {
+    const data = {
+      inputs,
+      user,
+      response_mode: stream ? "streaming" : "blocking",
+    };
+    return this.sendRequest(
+      routes.runWorkflow.method,
+      routes.runWorkflow.url(),
+      data,
+      null,
+      stream
+    );
+  }
 }
 
 export class ChatClient extends DifyClient {
@@ -204,8 +223,8 @@ export class ChatClient extends DifyClient {
     );
   }
 
-  renameConversation(conversation_id, name, user) {
-    const data = { name, user };
+  renameConversation(conversation_id, name, user, auto_generate) {
+    const data = { name, user, auto_generate };
     return this.sendRequest(
       routes.renameConversation.method,
       routes.renameConversation.url(conversation_id),

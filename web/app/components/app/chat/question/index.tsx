@@ -4,7 +4,6 @@ import React, { useRef } from 'react'
 import { useContext } from 'use-context-selector'
 import s from '../style.module.css'
 import type { IChatItem } from '../type'
-import Log from '../log'
 import MoreInfo from '../more-info'
 import AppContext from '@/context/app-context'
 import { Markdown } from '@/app/components/base/markdown'
@@ -13,25 +12,20 @@ import ImageGallery from '@/app/components/base/image-gallery'
 type IQuestionProps = Pick<IChatItem, 'id' | 'content' | 'more' | 'useCurrentUserAvatar'> & {
   isShowPromptLog?: boolean
   item: IChatItem
-  imgSrcs?: string[]
-  isResponsing?: boolean
+  isResponding?: boolean
 }
 
-const Question: FC<IQuestionProps> = ({ id, content, imgSrcs, more, useCurrentUserAvatar, isShowPromptLog, item, isResponsing }) => {
+const Question: FC<IQuestionProps> = ({ id, content, more, useCurrentUserAvatar, isShowPromptLog, item }) => {
   const { userProfile } = useContext(AppContext)
   const userName = userProfile?.name
   const ref = useRef(null)
+  const imgSrcs = item.message_files?.map(item => item.url)
 
   return (
     <div className={`flex items-start justify-end ${isShowPromptLog && 'first-of-type:pt-[14px]'}`} key={id} ref={ref}>
       <div className={s.questionWrapWrap}>
 
         <div className={`${s.question} group relative text-sm text-gray-900`}>
-          {
-            isShowPromptLog && !isResponsing && (
-              <Log log={item.log!} containerRef={ref} />
-            )
-          }
           <div
             className={'mr-2 py-3 px-4 bg-blue-500 rounded-tl-2xl rounded-b-2xl'}
           >
